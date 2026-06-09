@@ -35,6 +35,8 @@ let difficulty = '';
 
 /* state of upload for progress */
 let uploadState = { uploading: false };
+let activeSubmissionId = null;
+const uploadedSubmissionIds = {};
 
 function getLeetCodeProblemDirectory(problemName) {
   const problemDifficulty = difficulty.trim() || 'Unknown';
@@ -58,6 +60,228 @@ function findLanguage() {
     }
   }
   return null;
+}
+
+function getCookie(name) {
+  const cookies = document.cookie ? document.cookie.split('; ') : [];
+  for (let i = 0; i < cookies.length; i += 1) {
+    const parts = cookies[i].split('=');
+    if (parts[0] === name) {
+      return decodeURIComponent(parts.slice(1).join('='));
+    }
+  }
+  return '';
+}
+
+function getProblemSlugFromUrl() {
+  const match = window.location.pathname.match(
+    /^\/problems\/([^/]+)/,
+  );
+  return match ? match[1] : null;
+}
+
+function getSubmissionIdFromUrl() {
+  const match = window.location.pathname.match(
+    /\/submissions\/(?:detail\/)?(\d+)/,
+  );
+  return match ? match[1] : null;
+}
+
+function requestLeetCodeGraphQL(query, variables, cb) {
+  const xhr = new XMLHttpRequest();
+  xhr.addEventListener('readystatechange', function () {
+    if (xhr.readyState === 4) {
+      if (xhr.status === 200) {
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (response.errors) {
+            console.error('LeetHub GraphQL errors', response.errors);
+            cb(null);
+          } else {
+            cb(response.data);
+          }
+        } catch (error) {
+          console.error('LeetHub GraphQL parse failed', error);
+          cb(null);
+        }
+      } else {
+        console.error(
+          'LeetHub GraphQL request failed',
+          xhr.status,
+          xhr.responseText,
+        );
+        cb(null);
+      }
+    }
+  });
+
+  xhr.open('POST', 'https://leetcode.com/graphql', true);
+  xhr.withCredentials = true;
+  xhr.setRequestHeader('Accept', 'application/json');
+  xhr.setRequestHeader('Content-Type', 'application/json');
+
+  const csrfToken = getCookie('csrftoken');
+  if (csrfToken) {
+    xhr.setRequestHeader('x-csrftoken', csrfToken);
+  }
+
+  xhr.send(JSON.stringify({ query, variables }));
+}
+
+function fetchSubmissionDetails(submissionId, cb) {
+  const query = `
+    query submissionDetails($submissionId: Int!) {
+      submissionDetails(submissionId: $submissionId) {
+        runtime
+        runtimeDisplay
+        runtimePercentile
+        memory
+        memoryDisplay
+        memoryPercentile
+        code
+        statusCode
+        notes
+        lang {
+          name
+          verboseName
+        }
+        question {
+          questionId
+          titleSlug
+        }
+      }
+    }
+  `;
+
+  requestLeetCodeGraphQL(
+    query,
+    { submissionId: Number(submissionId) },
+    (data) => {
+      cb(data ? data.submissionDetails : null);
+    },
+  );
+}
+
+function fetchQuestionData(titleSlug, cb) {
+  const query = `
+    query questionData($titleSlug: String!) {
+      question(titleSlug: $titleSlug) {
+        questionId
+        questionFrontendId
+        title
+        titleSlug
+        content
+        difficulty
+      }
+    }
+  `;
+
+  requestLeetCodeGraphQL(query, { titleSlug }, (data) => {
+    cb(data ? data.question : null);
+  });
+}
+
+function findLanguageExtension(language) {
+  const candidates = [];
+  if (typeof language === 'string') {
+    candidates.push(language);
+  } else if (language) {
+    candidates.push(language.verboseName);
+    candidates.push(language.name);
+  }
+
+  const aliases = {
+    c: '.c',
+    'c++': '.cpp',
+    cpp: '.cpp',
+    cplusplus: '.cpp',
+    'c#': '.cs',
+    csharp: '.cs',
+    go: '.go',
+    golang: '.go',
+    java: '.java',
+    javascript: '.js',
+    kotlin: '.kt',
+    mysql: '.sql',
+    mssql: '.sql',
+    mssqlserver: '.sql',
+    oracle: '.sql',
+    php: '.php',
+    python: '.py',
+    python3: '.py',
+    ruby: '.rb',
+    rust: '.rs',
+    scala: '.scala',
+    swift: '.swift',
+    typescript: '.ts',
+  };
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    if (!candidate) {
+      continue;
+    }
+
+    if (languages[candidate]) {
+      return languages[candidate];
+    }
+
+    const normalized = candidate
+      .toLowerCase()
+      .replace(/[^a-z0-9+#]/g, '');
+
+    if (aliases[normalized]) {
+      return aliases[normalized];
+    }
+  }
+
+  return findLanguage();
+}
+
+function getProblemNameFromQuestion(question) {
+  if (!question) {
+    return addLeadingZeros(
+      convertToSlug(getProblemSlugFromUrl() || 'unknown-problem'),
+    );
+  }
+
+  const problemId = question.questionFrontendId || question.questionId;
+  const titleSlug =
+    question.titleSlug || convertToSlug(question.title || 'unknown-problem');
+
+  if (problemId) {
+    return addLeadingZeros(`${problemId}-${titleSlug}`);
+  }
+
+  return addLeadingZeros(titleSlug);
+}
+
+function formatQuestionMarkdown(question) {
+  const title = question.title || 'Unknown Problem';
+  const questionUrl = `https://leetcode.com/problems/${question.titleSlug}/`;
+  const content = question.content || '';
+  difficulty = question.difficulty || 'Unknown';
+
+  return `<h2><a href="${questionUrl}">${title}</a></h2><h3>${difficulty}</h3><hr>${content}`;
+}
+
+function formatSubmissionStats(submissionDetails) {
+  const runtime =
+    submissionDetails.runtimeDisplay || submissionDetails.runtime;
+  const memory =
+    submissionDetails.memoryDisplay || submissionDetails.memory;
+  const runtimePercentile = submissionDetails.runtimePercentile;
+  const memoryPercentile = submissionDetails.memoryPercentile;
+  const formattedRuntimePercentile =
+    runtimePercentile !== null && runtimePercentile !== undefined
+      ? ` (${Number(runtimePercentile).toFixed(2)}%)`
+      : '';
+  const formattedMemoryPercentile =
+    memoryPercentile !== null && memoryPercentile !== undefined
+      ? ` (${Number(memoryPercentile).toFixed(2)}%)`
+      : '';
+
+  return `Time: ${runtime}${formattedRuntimePercentile}, Space: ${memory}${formattedMemoryPercentile} - LeetHub`;
 }
 
 /* Main function for uploading code to GitHub repo, and callback cb is called if success */
@@ -121,6 +345,12 @@ const upload = (
             }
           });
         });
+      } else {
+        console.error(
+          `Failed to commit ${filename} to github`,
+          xhr.status,
+          xhr.responseText,
+        );
       }
     }
   });
@@ -517,6 +747,139 @@ function parseStats() {
   return `Time: ${time} (${timePercentile}), Space: ${space} (${spacePercentile}) - LeetHub`;
 }
 
+function isAcceptedSubmission(submissionDetails) {
+  return (
+    submissionDetails &&
+    (Number(submissionDetails.statusCode) === 10 ||
+      /\bAccepted\b/.test(document.body.innerText))
+  );
+}
+
+function uploadModernSubmission(submissionId, submissionDetails, question) {
+  difficulty = question.difficulty || 'Unknown';
+
+  const problemName = getProblemNameFromQuestion(question);
+  const problemDirectory = getLeetCodeProblemDirectory(problemName);
+  const language = findLanguageExtension(submissionDetails.lang);
+  const problemStatement = formatQuestionMarkdown(question);
+  const code = submissionDetails.code;
+  const stats = formatSubmissionStats(submissionDetails);
+
+  if (!language || !code) {
+    console.error('LeetHub could not find submission language or code');
+    activeSubmissionId = null;
+    markUploadFailed();
+    return;
+  }
+
+  uploadedSubmissionIds[submissionId] = true;
+
+  chrome.storage.local.get('stats', (s) => {
+    const { stats: localStats } = s;
+    const filePath = problemDirectory + problemName + language;
+    let sha = null;
+    if (
+      localStats !== undefined &&
+      localStats.sha !== undefined &&
+      localStats.sha[filePath] !== undefined
+    ) {
+      sha = localStats.sha[filePath];
+    }
+
+    if (sha === null) {
+      uploadGit(
+        btoa(unescape(encodeURIComponent(problemStatement))),
+        problemDirectory,
+        'README.md',
+        readmeMsg,
+        'upload',
+      );
+    }
+  });
+
+  const notes = submissionDetails.notes || '';
+  if (notes.trim().length > 0) {
+    setTimeout(function () {
+      uploadGit(
+        btoa(unescape(encodeURIComponent(notes.trim()))),
+        problemDirectory,
+        'NOTES.md',
+        createNotesMsg,
+        'upload',
+      );
+    }, 500);
+  }
+
+  setTimeout(function () {
+    uploadGit(
+      btoa(unescape(encodeURIComponent(code))),
+      problemDirectory,
+      problemName + language,
+      stats,
+      'upload',
+      true,
+      () => {
+        if (uploadState['countdown'])
+          clearTimeout(uploadState['countdown']);
+        delete uploadState['countdown'];
+        uploadState.uploading = false;
+        activeSubmissionId = null;
+        markUploaded();
+      },
+    );
+  }, 1000);
+}
+
+function processModernSubmissionPage() {
+  const submissionId = getSubmissionIdFromUrl();
+  if (!submissionId) {
+    return false;
+  }
+
+  if (
+    activeSubmissionId === submissionId ||
+    uploadedSubmissionIds[submissionId]
+  ) {
+    return true;
+  }
+
+  activeSubmissionId = submissionId;
+  startUpload();
+
+  fetchSubmissionDetails(submissionId, (submissionDetails) => {
+    if (!isAcceptedSubmission(submissionDetails)) {
+      activeSubmissionId = null;
+      uploadState.uploading = false;
+      return;
+    }
+
+    const titleSlug =
+      (submissionDetails.question &&
+        submissionDetails.question.titleSlug) ||
+      getProblemSlugFromUrl();
+
+    if (!titleSlug) {
+      console.error('LeetHub could not find problem slug');
+      activeSubmissionId = null;
+      markUploadFailed();
+      return;
+    }
+
+    fetchQuestionData(titleSlug, (question) => {
+      if (!question) {
+        console.error('LeetHub could not fetch question data');
+        activeSubmissionId = null;
+        markUploadFailed();
+        return;
+      }
+
+      uploadModernSubmission(submissionId, submissionDetails, question);
+    });
+  });
+
+  return true;
+}
+
 document.addEventListener('click', (event) => {
   const element = event.target;
   const oldPath = window.location.pathname;
@@ -590,6 +953,10 @@ function getNotesIfAny() {
 }
 
 const loader = setInterval(() => {
+  if (processModernSubmissionPage()) {
+    return;
+  }
+
   let code = null;
   let probStatement = null;
   let probStats = null;
@@ -713,7 +1080,7 @@ const loader = setInterval(() => {
 function startUploadCountDown() {
   uploadState.uploading = true;
   uploadState['countdown'] = setTimeout(() => {
-    if ((uploadState.uploading = true)) {
+    if (uploadState.uploading === true) {
       // still uploading, then it failed
       uploadState.uploading = false;
       markUploadFailed();
