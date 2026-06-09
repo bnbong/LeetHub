@@ -21,20 +21,16 @@ const oAuth2 = {
   begin() {
     this.init(); // secure token params.
 
-    let url = `${this.AUTHORIZATION_URL}?client_id=${this.CLIENT_ID}&redirect_uri${this.REDIRECT_URL}&scope=`;
-
-    for (let i = 0; i < this.SCOPES.length; i += 1) {
-      url += this.SCOPES[i];
-    }
+    const url =
+      `${this.AUTHORIZATION_URL}?client_id=${this.CLIENT_ID}` +
+      `&redirect_uri=${encodeURIComponent(this.REDIRECT_URL)}` +
+      `&scope=${this.SCOPES.join('%20')}`;
 
     chrome.storage.local.set({ pipe_leethub: true }, () => {
       // opening pipe temporarily
 
       chrome.tabs.create({ url, active: true }, function () {
         window.close();
-        chrome.tabs.getCurrent(function (tab) {
-          chrome.tabs.remove(tab.id, function () {});
-        });
       });
     });
   },

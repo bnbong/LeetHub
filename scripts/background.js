@@ -1,30 +1,27 @@
-function handleMessage(request) {
-  if (
-    request &&
-    request.closeWebPage === true &&
-    request.isSuccess === true
-  ) {
+function closeSenderTab(sender) {
+  if (sender && sender.tab && sender.tab.id !== undefined) {
+    chrome.tabs.remove(sender.tab.id);
+  }
+}
+
+function handleMessage(request, sender) {
+  if (!request || request.closeWebPage !== true) {
+    return;
+  }
+
+  if (request.isSuccess === true) {
     /* Set username */
-    chrome.storage.local.set(
-      { leethub_username: request.username },
-      () => {
-        window.localStorage.leethub_username = request.username;
-      },
-    );
+    chrome.storage.local.set({ leethub_username: request.username });
 
     /* Set token */
-    chrome.storage.local.set({ leethub_token: request.token }, () => {
-      window.localStorage[request.KEY] = request.token;
-    });
+    chrome.storage.local.set({ leethub_token: request.token });
 
     /* Close pipe */
     chrome.storage.local.set({ pipe_leethub: false }, () => {
       console.log('Closed pipe.');
     });
 
-    chrome.tabs.getSelected(null, function (tab) {
-      chrome.tabs.remove(tab.id);
-    });
+    closeSenderTab(sender);
 
     /* Go to onboarding for UX */
     const urlOnboarding = chrome.runtime.getURL('welcome.html');
@@ -32,14 +29,12 @@ function handleMessage(request) {
   } else if (
     request &&
     request.closeWebPage === true &&
-    request.isSuccess === true
+    request.isSuccess === false
   ) {
-    alert(
+    console.error(
       'Something went wrong while trying to authenticate your profile!',
     );
-    chrome.tabs.getSelected(null, function (tab) {
-      chrome.tabs.remove(tab.id);
-    });
+    closeSenderTab(sender);
   }
 }
 
