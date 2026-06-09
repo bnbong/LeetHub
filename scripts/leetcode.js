@@ -36,6 +36,11 @@ let difficulty = '';
 /* state of upload for progress */
 let uploadState = { uploading: false };
 
+function getLeetCodeProblemDirectory(problemName) {
+  const problemDifficulty = difficulty.trim() || 'Unknown';
+  return `LeetCode/${problemDifficulty}/${problemName}`;
+}
+
 /* Get file extension for submission */
 function findLanguage() {
   const tag = [
@@ -438,6 +443,7 @@ function addLeadingZeros(title) {
 
 /* Parser function for the question and tags */
 function parseQuestion() {
+  difficulty = '';
   var questionUrl = window.location.href;
   if (questionUrl.endsWith('/submissions/')) {
     questionUrl = questionUrl.substring(
@@ -631,13 +637,14 @@ const loader = setInterval(() => {
     }
 
     const problemName = getProblemNameSlug();
+    const problemDirectory = getLeetCodeProblemDirectory(problemName);
     const language = findLanguage();
     if (language !== null) {
       // start upload indicator here
       startUpload();
       chrome.storage.local.get('stats', (s) => {
         const { stats } = s;
-        const filePath = problemName + problemName + language;
+        const filePath = problemDirectory + problemName + language;
         let sha = null;
         if (
           stats !== undefined &&
@@ -652,7 +659,7 @@ const loader = setInterval(() => {
           /* @TODO: Change this setTimeout to Promise */
           uploadGit(
             btoa(unescape(encodeURIComponent(probStatement))),
-            problemName,
+            problemDirectory,
             'README.md',
             readmeMsg,
             'upload',
@@ -670,7 +677,7 @@ const loader = setInterval(() => {
             // means we can upload the notes too
             uploadGit(
               btoa(unescape(encodeURIComponent(notes))),
-              problemName,
+              problemDirectory,
               'NOTES.md',
               createNotesMsg,
               'upload',
@@ -683,7 +690,7 @@ const loader = setInterval(() => {
       setTimeout(function () {
         findCode(
           uploadGit,
-          problemName,
+          problemDirectory,
           problemName + language,
           probStats,
           'upload',
